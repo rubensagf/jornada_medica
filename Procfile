@@ -1,0 +1,1 @@
+web: gunicorn migracao_medica_dash:server

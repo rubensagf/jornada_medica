@@ -164,3 +164,4 @@ if __name__ == '__main__':
     print("\n--- Aplicação pronta! Acesse o endereço abaixo no seu navegador. ---")
     print("Use CTRL+C no terminal para encerrar o servidor.")
     app.run(debug=False)
+    server = app.server  # Necessário para o Gunicorn

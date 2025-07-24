@@ -1,9 +1,9 @@
 import pandas as pd
 import plotly.graph_objects as go
 import dash
-from dash import dcc, html, Input, Output, State, ctx # Removido ALL, importado ctx
+from dash import dcc, html, Input, Output, State, ctx
 
-print("--- Preparando a Aplicação Dash (Versão com Correção Final) ---")
+print("--- Preparando a Aplicação Dash (Versão com Tooltips de Insight) ---")
 
 # --- 1. PREPARAÇÃO DOS DADOS ---
 ARQUIVO_ENTRADA = 'jornada_medicos_trimestral.xlsx'
@@ -52,11 +52,10 @@ categorias_ordenadas = sorted(all_cats, key=chave_de_ordenacao)
 print(f"Ordem hierárquica final das categorias: {categorias_ordenadas}")
 
 app = dash.Dash(__name__)
-server = app.server  # Necessário para o Gunicorn
+server = app.server
 
 app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif'}, children=[
     html.H1("Dashboard de Jornada de Categoria dos Médicos", style={'textAlign': 'center'}),
-    
     html.Div(className='controls-container', style={'width': '90%', 'margin': 'auto', 'padding': '10px', 'border': '1px solid #ddd', 'borderRadius': '5px'}, children=[
         html.Div(style={'display': 'flex', 'gap': '40px'}, children=[
             html.Div(style={'flex': 1}, children=[
@@ -74,7 +73,6 @@ app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif'}, children=[
             html.Div(id='focus-buttons-container', style={'marginTop': '10px'})
         ]),
     ]),
-    
     dcc.Graph(id='sankey-graph', style={'height': '75vh'}),
     dcc.Store(id='focus-category-store')
 ])
@@ -91,15 +89,12 @@ def update_focus_buttons(categorias_selecionadas):
                 buttons.append(html.Button(f'Focar em Cat. {cat}', id={'type': 'focus-button', 'index': cat}, n_clicks=0, style={'marginRight': '5px'}))
     return buttons
 
-# --- CORREÇÃO AQUI ---
-# A biblioteca Dash espera que o Input para múltiplos botões seja declarado sem a função ALL
 @app.callback(
     Output('focus-category-store', 'data'),
     Input({'type': 'focus-button', 'index': dash.dependencies.ALL}, 'n_clicks'),
     prevent_initial_call=True
 )
 def store_focus_category(n_clicks):
-    # 'ctx' (callback_context) nos diz qual botão foi clicado
     return ctx.triggered_id['index'] if ctx.triggered_id else 'geral'
 
 @app.callback(
@@ -123,17 +118,27 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
         return go.Figure().update_layout(title_text="Nenhuma transição encontrada")
 
     current_cats_ordered = [cat for cat in categorias_ordenadas if cat in pd.unique(data[['cat_source', 'cat_target']].values.ravel('K'))]
-    labels, node_map = [], {}
+    labels, node_map, node_custom_data = [], {}, []
+    
+    # Calcula totais por trimestre para o tooltip de representatividade
+    total_por_trimestre = data.groupby('trimestre_source')['value'].sum()
     
     for i, trimestre in enumerate(trimestres):
         cats_no_trimestre = pd.unique(data[data['trimestre_source'] == trimestre]['cat_source'])
+        total_trimestre_atual = total_por_trimestre.get(trimestre, 0)
+        
         for j, categoria in enumerate(current_cats_ordered):
             if categoria in cats_no_trimestre:
-                label = f"Cat. {categoria}<br>({trimestre})"
-                labels.append(label)
+                label_text = f"Cat. {categoria}<br>({trimestre})"
+                labels.append(label_text)
                 node_map[f"{trimestre}: Cat {categoria}"] = len(labels) - 1
                 
-    link_source, link_target, link_value, link_color, link_cat_source, link_cat_target = [], [], [], [], [], []
+                # Prepara dados para o tooltip do nó
+                total_cat = data[(data['trimestre_source'] == trimestre) & (data['cat_source'] == categoria)]['value'].sum()
+                percentual = (total_cat / total_trimestre_atual) * 100 if total_trimestre_atual > 0 else 0
+                node_custom_data.append(f"Total: {total_cat} médicos<br>Representatividade: {percentual:.1f}% neste trimestre")
+
+    link_source, link_target, link_value, link_color, link_cat_source, link_cat_target, link_custom_data = [], [], [], [], [], [], []
     for _, row in data.iterrows():
         source_key, target_key = f"{row['trimestre_source']}: Cat {row['cat_source']}", f"{row['trimestre_target']}: Cat {row['cat_target']}"
         if source_key in node_map and target_key in node_map:
@@ -142,6 +147,17 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
             source_color_hex = CORES_CATEGORIAS.get(row['cat_source'], CORES_CATEGORIAS['default'])
             link_color.append(f'rgba({int(source_color_hex[1:3], 16)}, {int(source_color_hex[3:5], 16)}, {int(source_color_hex[5:7], 16)}, 0.6)')
             link_cat_source.append(row['cat_source']); link_cat_target.append(row['cat_target'])
+            
+            # --- LÓGICA DO INSIGHT DE MOVIMENTO ---
+            insight = ""
+            try:
+                if int(row['cat_target']) < int(row['cat_source']): insight = "<b>Insight:</b> Este fluxo representa uma <b>melhora</b> de categoria."
+                elif int(row['cat_target']) > int(row['cat_source']): insight = "<b>Insight:</b> Este fluxo representa uma <b>regressão</b> de categoria."
+                else: insight = "<b>Insight:</b> Médicos que <b>mantiveram</b> a categoria."
+            except ValueError:
+                insight = "<b>Insight:</b> Movimento envolvendo categoria não-numérica." # Lida com "SEM CAT"
+            
+            link_custom_data.append(f"<b>Movimento:</b> {row['value']} médicos<br><b>De:</b> Cat.{row['cat_source']} ({row['trimestre_source']})<br><b>Para:</b> Cat.{row['cat_target']} ({row['trimestre_target']})<br>{insight}")
 
     cor_link_final = link_color
     if categoria_foco and categoria_foco != 'geral':
@@ -155,8 +171,18 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
         
     fig = go.Figure(go.Sankey(
         arrangement='snap',
-        node={'pad': 25, 'thickness': 20, 'line': {'color': 'black', 'width': 0.5}, 'label': labels, 'color': [CORES_CATEGORIAS.get(cat.split('<br>')[0].replace('Cat. ', ''), CORES_CATEGORIAS['default']) for cat in labels]},
-        link={'source': link_source, 'target': link_target, 'value': link_value, 'color': cor_link_final}
+        node={
+            'pad': 25, 'thickness': 20, 'line': {'color': 'black', 'width': 0.5},
+            'label': labels,
+            'color': [CORES_CATEGORIAS.get(cat.split('<br>')[0].replace('Cat. ', ''), CORES_CATEGORIAS['default']) for cat in labels],
+            'customdata': node_custom_data,
+            'hovertemplate': '<b>%{label}</b><br>%{customdata}<extra></extra>'
+        },
+        link={
+            'source': link_source, 'target': link_target, 'value': link_value, 'color': cor_link_final,
+            'customdata': link_custom_data,
+            'hovertemplate': '%{customdata}<extra></extra>'
+        }
     ))
     fig.update_layout(title_text=f"Jornada de Médicos - {universo.replace('_', ' ').title()}", transition_duration=250)
     return fig

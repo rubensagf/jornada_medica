@@ -52,6 +52,7 @@ categorias_ordenadas = sorted(all_cats, key=chave_de_ordenacao)
 print(f"Ordem hierárquica final das categorias: {categorias_ordenadas}")
 
 app = dash.Dash(__name__)
+server = app.server  # Necessário para o Gunicorn
 
 app.layout = html.Div(style={'fontFamily': 'Arial, sans-serif'}, children=[
     html.H1("Dashboard de Jornada de Categoria dos Médicos", style={'textAlign': 'center'}),
@@ -164,4 +165,3 @@ if __name__ == '__main__':
     print("\n--- Aplicação pronta! Acesse o endereço abaixo no seu navegador. ---")
     print("Use CTRL+C no terminal para encerrar o servidor.")
     app.run(debug=False)
-    server = app.server  # Necessário para o Gunicorn

@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 import dash
 from dash import dcc, html, Input, Output, State, ctx
 
-print("--- Preparando a Aplicação Dash (Versão com Tooltips de Insight) ---")
+print("--- Preparando a Aplicação Dash (Versão com Lógica de Insight Corrigida) ---")
 
 # --- 1. PREPARAÇÃO DOS DADOS ---
 ARQUIVO_ENTRADA = 'jornada_medicos_trimestral.xlsx'
@@ -120,7 +120,6 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
     current_cats_ordered = [cat for cat in categorias_ordenadas if cat in pd.unique(data[['cat_source', 'cat_target']].values.ravel('K'))]
     labels, node_map, node_custom_data = [], {}, []
     
-    # Calcula totais por trimestre para o tooltip de representatividade
     total_por_trimestre = data.groupby('trimestre_source')['value'].sum()
     
     for i, trimestre in enumerate(trimestres):
@@ -133,7 +132,6 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
                 labels.append(label_text)
                 node_map[f"{trimestre}: Cat {categoria}"] = len(labels) - 1
                 
-                # Prepara dados para o tooltip do nó
                 total_cat = data[(data['trimestre_source'] == trimestre) & (data['cat_source'] == categoria)]['value'].sum()
                 percentual = (total_cat / total_trimestre_atual) * 100 if total_trimestre_atual > 0 else 0
                 node_custom_data.append(f"Total: {total_cat} médicos<br>Representatividade: {percentual:.1f}% neste trimestre")
@@ -148,14 +146,24 @@ def update_graph(universo, categorias_selecionadas, categoria_foco):
             link_color.append(f'rgba({int(source_color_hex[1:3], 16)}, {int(source_color_hex[3:5], 16)}, {int(source_color_hex[5:7], 16)}, 0.6)')
             link_cat_source.append(row['cat_source']); link_cat_target.append(row['cat_target'])
             
-            # --- LÓGICA DO INSIGHT DE MOVIMENTO ---
+            # ##########################################################################
+            # ## CORREÇÃO: Lógica de Insight aprimorada para "SEM CAT" ##
+            # ##########################################################################
             insight = ""
-            try:
-                if int(row['cat_target']) < int(row['cat_source']): insight = "<b>Insight:</b> Este fluxo representa uma <b>melhora</b> de categoria."
-                elif int(row['cat_target']) > int(row['cat_source']): insight = "<b>Insight:</b> Este fluxo representa uma <b>regressão</b> de categoria."
-                else: insight = "<b>Insight:</b> Médicos que <b>mantiveram</b> a categoria."
-            except ValueError:
-                insight = "<b>Insight:</b> Movimento envolvendo categoria não-numérica." # Lida com "SEM CAT"
+            source_cat = row['cat_source']
+            target_cat = row['cat_target']
+
+            if source_cat == target_cat:
+                insight = "<b>Insight:</b> Médicos que <b>mantiveram</b> a categoria."
+            elif source_cat == 'SEM CAT': # Qualquer saída de "SEM CAT" é melhora
+                insight = "<b>Insight:</b> Este fluxo representa uma <b>melhora</b> (entrada em categoria)."
+            elif target_cat == 'SEM CAT': # Qualquer entrada em "SEM CAT" é regressão
+                insight = "<b>Insight:</b> Este fluxo representa uma <b>regressão</b> (saída de categoria)."
+            else: # Lógica para categorias numéricas
+                if int(target_cat) < int(source_cat):
+                    insight = "<b>Insight:</b> Este fluxo representa uma <b>melhora</b> de categoria."
+                else: # int(target_cat) > int(source_cat)
+                    insight = "<b>Insight:</b> Este fluxo representa uma <b>regressão</b> de categoria."
             
             link_custom_data.append(f"<b>Movimento:</b> {row['value']} médicos<br><b>De:</b> Cat.{row['cat_source']} ({row['trimestre_source']})<br><b>Para:</b> Cat.{row['cat_target']} ({row['trimestre_target']})<br>{insight}")
 
